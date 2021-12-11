@@ -141,11 +141,11 @@ generate: controller-gen
 
 # Build the docker image
 local-image-build: patch helm-lint helm-repo-index test generate manifests-gen
-	podman build -f Dockerfile.ubi8 --no-cache . -t $(IMAGE)
+	docker build -f Dockerfile.ubi8 --no-cache . -t $(IMAGE)
 
 # Push the docker image
 local-image-push:
-	podman push $(IMAGE)
+	docker push $(IMAGE)
 
 
 # Generate bundle manifests-gen and metadata, then validate generated files.

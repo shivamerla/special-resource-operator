@@ -1,0 +1,73 @@
+{{- if .Values.gfd.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gpu-feature-discovery
+  namespace: {{.Values.specialresource.spec.namespace}}
+  labels:
+    app: gpu-feature-discovery
+    app.kubernetes.io/part-of: nvidia-gpu
+spec:
+  selector:
+    matchLabels:
+      app: gpu-feature-discovery
+      app.kubernetes.io/part-of: nvidia-gpu
+  template:
+    metadata:
+      labels:
+        app: gpu-feature-discovery
+        app.kubernetes.io/part-of: nvidia-gpu
+    spec:
+      {{- if eq .Values.containerRuntime "containerd" }}
+      runtimeClassName: {{.Values.runtimeClass | default "nvidia" }}
+      {{- end }}
+      nodeSelector:
+        nvidia.com/gpu.deploy.gpu-feature-discovery: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      priorityClassName: system-node-critical
+      serviceAccount: nvidia-gpu-feature-discovery
+      initContainers:
+        - name: toolkit-validation
+          image: {{ include "image.fullname" .Values.validator }}
+          command: ['sh', '-c']
+          args: ["until [ -f /run/nvidia/validations/toolkit-ready ]; do echo waiting for nvidia container stack to be setup; sleep 5; done"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: run-nvidia
+              mountPath: /run/nvidia
+              mountPropagation: Bidirectional
+      containers:
+        - image: {{ include "image.fullname" .Values.gfd }}
+          name: gpu-feature-discovery
+          env:
+            - name: GFD_SLEEP_INTERVAL
+              value: 60s
+            - name: GFD_FAIL_ON_INIT_ERROR
+              value: "true"
+            - name: GFD_MIG_STRATEGY
+              value: {{.Values.mig.strategy}}
+            - name: NVIDIA_MIG_MONITOR_DEVICES
+              value: all
+          volumeMounts:
+            - name: output-dir
+              mountPath: "/etc/kubernetes/node-feature-discovery/features.d"
+            - name: dmi-product-name
+              mountPath: "/sys/class/dmi/id/product_name"
+          securityContext:
+            privileged: true
+      volumes:
+        - name: output-dir
+          hostPath:
+            path: "/etc/kubernetes/node-feature-discovery/features.d"
+        - name: dmi-product-name
+          hostPath:
+            path: "/sys/class/dmi/id/product_name"
+        - name: run-nvidia
+          hostPath:
+            path: "/run/nvidia"
+            type: Directory
+{{- end }}

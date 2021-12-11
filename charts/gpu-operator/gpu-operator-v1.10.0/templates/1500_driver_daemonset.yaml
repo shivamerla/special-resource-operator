@@ -1,0 +1,249 @@
+{{- if .Values.driver.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: nvidia-driver-daemonset
+  name: nvidia-driver-daemonset
+  namespace: {{.Values.specialresource.spec.namespace}}
+  annotations:
+    openshift.io/scc: nvidia-driver
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-driver-daemonset
+  template:
+    metadata:
+      labels:
+        app: nvidia-driver-daemonset
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.deploy.driver: "true"
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      priorityClassName: system-node-critical
+      serviceAccount: nvidia-driver
+      serviceAccountName: nvidia-driver
+      hostPID: true
+      initContainers:
+        {{- if .Values.driver.rdma.enabled }}
+        - name: mofed-validation
+          image: {{ include "image.fullname" .Values.validator }}
+          imagePullSecrets:
+          {{- range .Values.validator.imagePullSecrets }}
+            - name: {{ . }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.validator.imagePullPolicy }}
+          command: ['sh', '-c']
+          args: ["nvidia-validator"]
+          env:
+            - name: WITH_WAIT
+              value: "true"
+            - name: COMPONENT
+              value: mofed
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            # always use runc for driver containers
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: void
+          securityContext:
+            privileged: true
+            seLinuxOptions:
+              level: "s0"
+          volumeMounts:
+            - name: run-nvidia-validations
+              mountPath: /run/nvidia/validations
+              mountPropagation: Bidirectional
+        {{- end }}
+        - name: k8s-driver-manager
+          image:  {{ include "image.fullname" .Values.driverManager }}
+          imagePullSecrets:
+          {{- range .Values.driverManager.imagePullSecrets }}
+            - name: {{ . }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.driverManager.imagePullPolicy }}
+          command: ["driver-manager"]
+          args: ["uninstall_driver"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: OPERATOR_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- range .Values.driverManager.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: run-nvidia
+              mountPath: /run/nvidia
+              mountPropagation: Bidirectional
+          {{- with .Values.driverManager.resources }}
+          resources:
+            {{- toYaml . | nindent 10 }}
+          {{- end }}
+      containers:
+      - image: nvcr.io/nvidia/driver:470.82.01-ubuntu20.04
+        imagePullPolicy: {{ .Values.driver.imagePullPolicy }}
+        imagePullSecrets:
+        {{- range .Values.driver.imagePullSecrets }}
+          - name: {{ . }}
+        {{- end }}
+        name: nvidia-driver-ctr
+        command: ["nvidia-driver"]
+        args: ["init"]
+        env:
+          {{- range .Values.driver.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+          {{- end }}
+        securityContext:
+          privileged: true
+          seLinuxOptions:
+            level: "s0"
+        volumeMounts:
+          - name: run-nvidia
+            mountPath: /run/nvidia
+            mountPropagation: Bidirectional
+          - name: run-nvidia-topologyd
+            mountPath: /run/nvidia-topologyd
+          - name: var-log
+            mountPath: /var/log
+          - name: dev-log
+            mountPath: /dev/log
+          - name: host-os-release
+            mountPath: "/host-etc/os-release"
+            readOnly: true
+          - name: mlnx-ofed-usr-src
+            mountPath: /run/mellanox/drivers/usr/src
+            mountPropagation: HostToContainer
+        {{- with .Values.driver.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- if .Values.driver.rdma.enabled }}
+      - image: {{ include "image.fullname" .Values.driver }}
+        imagePullPolicy: {{ .Values.driver.imagePullPolicy }}
+        imagePullSecrets:
+        {{- range .Values.driver.imagePullSecrets }}
+          - name: {{ . }}
+        {{- end }}
+        name: nvidia-peermem-ctr
+        command: ["nvidia-driver"]
+        # takes care of loading nvidia_peermem whenever it gets dynamically unloaded during MOFED driver re-install/update
+        args: ["reload_nvidia_peermem"]
+        securityContext:
+          privileged: true
+          seLinuxOptions:
+            level: "s0"
+        volumeMounts:
+          - name: run-nvidia
+            mountPath: /run/nvidia
+            mountPropagation: Bidirectional
+          - name: var-log
+            mountPath: /var/log
+          - name: dev-log
+            mountPath: /dev/log
+            readOnly: true
+          - name: mlnx-ofed-usr-src
+            mountPath: /run/mellanox/drivers/usr/src
+            mountPropagation: HostToContainer
+        startupProbe:
+          exec:
+            command:
+              [sh, -c, 'nvidia-driver probe_nvidia_peermem']
+          initialDelaySeconds: 10
+          failureThreshold: 60
+          successThreshold: 1
+          periodSeconds: 10
+        livenessProbe:
+          exec:
+            command:
+              [sh, -c, 'nvidia-driver probe_nvidia_peermem']
+          periodSeconds: 30
+          initialDelaySeconds: 30
+          failureThreshold: 1
+          successThreshold: 1
+      {{- end }}
+      {{- if and (eq .Values.platform "OCP")  (.Values.driver.use_ocp_toolkit) }}
+        # Only kept when OpenShift DriverToolkit side-car is enabled.
+      - image: {{.Values.driverToolkitImage}}
+        imagePullPolicy: {{ .Values.driver.imagePullPolicy }}
+        imagePullSecrets:
+        {{- range .Values.driver.imagePullSecrets }}
+          - name: {{ . }}
+        {{- end }}
+        name: openshift-driver-toolkit-ctr
+        command: [bash, -xc]
+        args: ["until [ -f /mnt/shared-nvidia-driver-toolkit/dir_prepared ]; do echo  Waiting for nvidia-driver-ctr container to prepare the shared directory ...; sleep 10; done; exec /mnt/shared-nvidia-driver-toolkit/ocp_dtk_entrypoint dtk-build-driver"]
+        securityContext:
+          # currently mandatory as 'nvidia-installer' loads (and
+          # unloads) the kernel module as part of the build process
+          privileged: true
+          seLinuxOptions:
+            level: "s0"
+        env:
+          - name: RHCOS_VERSION
+            value: {{.Values.operatingSystemMajorMinor}}
+          # always use runc for driver containers
+          - name: NVIDIA_VISIBLE_DEVICES
+            value: void
+          {{- range .Values.driver.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+          {{- end }}
+        volumeMounts:
+          # corresponding volumes are dynamically inject by the
+          # operator when OCP DriverToolkit side-car is enabled
+          - name: shared-nvidia-driver-toolkit
+            mountPath: /mnt/shared-nvidia-driver-toolkit
+          - name: var-log
+            mountPath: /var/log
+        {{- with .Values.driver.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+      volumes:
+        - name: run-nvidia
+          hostPath:
+            path: /run/nvidia
+            type: DirectoryOrCreate
+        - name: var-log
+          hostPath:
+            path: /var/log
+        - name: dev-log
+          hostPath:
+            path: /dev/log
+        - name: host-os-release
+          hostPath:
+            path: "/etc/os-release"
+        - name: run-nvidia-topologyd
+          hostPath:
+            path: /run/nvidia-topologyd
+            type: DirectoryOrCreate
+        {{- if .Values.driver.useHostMofed }}
+        - name: mlnx-ofed-usr-src
+          hostPath:
+            path: /usr/src
+            type: DirectoryOrCreate
+        {{- else }}
+        - name: mlnx-ofed-usr-src
+          hostPath:
+            path: /run/mellanox/drivers/usr/src
+            type: DirectoryOrCreate
+        {{- end }}
+        - name: run-nvidia-validations
+          hostPath:
+            path: /run/nvidia/validations
+            type: DirectoryOrCreate
+{{- end }}

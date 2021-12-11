@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-operator-validator
+  namespace: {{.Values.specialresource.spec.namespace}}
+  labels:
+    app: nvidia-operator-validator
+    app.kubernetes.io/part-of: gpu-operator
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-operator-validator
+      app.kubernetes.io/part-of: gpu-operator
+  template:
+    metadata:
+      labels:
+        app: nvidia-operator-validator
+        app.kubernetes.io/part-of: gpu-operator
+    spec:
+      {{- if eq .Values.containerRuntime "containerd" }}
+      runtimeClassName: {{.Values.runtimeClass | default "nvidia" }}
+      {{- end }}
+      nodeSelector:
+        nvidia.com/gpu.deploy.operator-validator: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      priorityClassName: system-node-critical
+      serviceAccount: nvidia-operator-validator
+      initContainers:
+        - name: driver-validation
+          image: {{ include "image.fullname" .Values.validator }}
+          command: ['sh', '-c']
+          args: ["nvidia-validator"]
+          env:
+            {{- range .Values.validator.driver.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          securityContext:
+            privileged: true
+            seLinuxOptions:
+              level: "s0"
+          volumeMounts:
+            - name: driver-install-path
+              mountPath: /run/nvidia/driver
+              mountPropagation: HostToContainer
+            - name: run-nvidia-validations
+              mountPath: /run/nvidia/validations
+              mountPropagation: Bidirectional
+        - name: toolkit-validation
+          image: {{ include "image.fullname" .Values.validator }}
+          command: ['sh', '-c']
+          args: ["nvidia-validator"]
+          env:
+          {{- range .Values.validator.toolkit.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+          {{- end }}
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: run-nvidia-validations
+              mountPath: /run/nvidia/validations
+              mountPropagation: Bidirectional
+        - name: cuda-validation
+          image: {{ include "image.fullname" .Values.validator }}
+          command: ['sh', '-c']
+          args: ["nvidia-validator"]
+          env:
+          {{- range .Values.validator.cuda.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+          {{- end }}
+          - name: VALIDATOR_IMAGE
+            value: {{.Values.validator.image}}
+          - name: VALIDATOR_IMAGE_PULL_POLICY
+            value: {{.Values.validator.imagePullPolicy}}
+          - name: VALIDATOR_RUNTIME_CLASS
+            value: {{.Values.runtimeClass | default "nvidia" }}
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: OPERATOR_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: run-nvidia-validations
+              mountPath: /run/nvidia/validations
+              mountPropagation: Bidirectional
+        - name: plugin-validation
+          image: {{ include "image.fullname" .Values.validator }}
+          command: ['sh', '-c']
+          args: ["nvidia-validator"]
+          env:
+          {{- range .Values.validator.plugin.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+          {{- end }}
+          - name: VALIDATOR_IMAGE
+            value: {{ include "image.fullname" .Values.validator }}
+          - name: VALIDATOR_IMAGE_PULL_POLICY
+            value: {{.Values.validator.imagePullPolicy}}
+          {{- if eq .Values.containerRuntime "containerd"}}
+          - name: VALIDATOR_RUNTIME_CLASS
+            value: {{.Values.runtimeClass | default "nvidia" }}
+          {{- end }}
+          - name: MIG_STRATEGY
+            value: {{.Values.mig.strategy}}
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: OPERATOR_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: run-nvidia-validations
+              mountPath: /run/nvidia/validations
+              mountPropagation: Bidirectional
+      containers:
+        - image: {{ include "image.fullname" .Values.validator }}
+          name: nvidia-operator-validator
+          command: ['sh', '-c']
+          args: ["echo all validations are successful; sleep infinity"]
+          securityContext:
+            privileged: true
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "rm -f /run/nvidia/validations/*-ready"]
+          volumeMounts:
+            - name: run-nvidia-validations
+              mountPath: "/run/nvidia/validations"
+              mountPropagation: Bidirectional
+      volumes:
+        - name: run-nvidia-validations
+          hostPath:
+            path: /run/nvidia/validations
+            type: DirectoryOrCreate
+        - name: driver-install-path
+          hostPath:
+            path: /run/nvidia/driver

@@ -1,0 +1,17 @@
+{{- if .Values.dcgmExporter.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: {{.Values.specialresource.spec.namespace}}
+  labels:
+    app: nvidia-dcgm-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nvidia-dcgm-exporter
+subjects:
+- kind: ServiceAccount
+  name: nvidia-dcgm-exporter
+  namespace: {{.Values.specialresource.spec.namespace}}
+{{- end }}

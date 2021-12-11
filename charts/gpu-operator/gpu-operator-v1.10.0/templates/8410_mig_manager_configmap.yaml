@@ -1,0 +1,20 @@
+{{- if .Values.migManager.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: default-gpu-clients
+  namespace: {{.Values.specialresource.spec.namespace}}
+data:
+  clients.yaml: |
+    version: v1
+    systemd-services:
+      - nvsm.service
+      - nvsm-mqtt.service
+      - nvsm-core.service
+      - nvsm-api-gateway.service
+      - nvsm-notifier.service
+      - nv_peer_mem.service
+      - nvidia-dcgm.service
+      - dcgm.service
+      - dcgm-exporter.service
+{{- end }}

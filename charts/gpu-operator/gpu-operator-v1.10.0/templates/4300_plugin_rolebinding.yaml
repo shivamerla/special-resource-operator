@@ -1,0 +1,15 @@
+{{- if .Values.devicePlugin.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nvidia-device-plugin
+  namespace: {{.Values.specialresource.spec.namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nvidia-device-plugin
+subjects:
+- kind: ServiceAccount
+  name: nvidia-device-plugin
+  namespace: {{.Values.specialresource.spec.namespace}}
+{{- end }}

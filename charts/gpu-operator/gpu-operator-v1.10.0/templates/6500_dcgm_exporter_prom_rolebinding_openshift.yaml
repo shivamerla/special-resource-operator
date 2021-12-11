@@ -1,0 +1,17 @@
+{{- if .Values.dcgmExporter.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-k8s
+  namespace: {{.Values.specialresource.spec.namespace}}
+  labels:
+    app: nvidia-dcgm-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus-k8s
+subjects:
+- kind: ServiceAccount
+  name: prometheus-k8s
+  namespace: openshift-monitoring
+{{- end }}
