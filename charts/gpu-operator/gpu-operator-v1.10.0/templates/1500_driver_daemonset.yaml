@@ -92,7 +92,7 @@ spec:
             {{- toYaml . | nindent 10 }}
           {{- end }}
       containers:
-      - image: nvcr.io/nvidia/driver:470.82.01-ubuntu20.04
+      - image: {{ include "image.fullname" .Values.driver }}
         imagePullPolicy: {{ .Values.driver.imagePullPolicy }}
         imagePullSecrets:
         {{- range .Values.driver.imagePullSecrets }}

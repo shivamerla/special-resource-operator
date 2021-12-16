@@ -14,7 +14,6 @@ psp:
 platform: K8S
 containerRuntime: containerd
 runtimeClass: nvidia
-operatingSystemMajorMinor: ubuntu20.04
 priorityClassName: system-node-critical
 tolerations:
   - key: nvidia.com/gpu
