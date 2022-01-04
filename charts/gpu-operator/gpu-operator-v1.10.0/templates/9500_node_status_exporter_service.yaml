@@ -1,0 +1,19 @@
+{{- if .Values.nodeStatusExporter.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{.Values.specialresource.spec.namespace}}
+  name: nvidia-node-status-exporter
+  labels:
+    app: nvidia-node-status-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+spec:
+  selector:
+    app: nvidia-node-status-exporter
+  ports:
+  - name: node-status
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+{{- end }}

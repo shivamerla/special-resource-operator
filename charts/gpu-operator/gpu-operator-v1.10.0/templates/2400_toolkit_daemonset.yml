@@ -1,0 +1,146 @@
+{{- if .Values.toolkit.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: nvidia-container-toolkit-daemonset
+  name: nvidia-container-toolkit-daemonset
+  namespace: {{.Values.specialresource.spec.namespace}}
+  annotations:
+    openshift.io/scc: hostmount-anyuid
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-container-toolkit-daemonset
+  template:
+    metadata:
+      labels:
+        app: nvidia-container-toolkit-daemonset
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.deploy.container-toolkit: "true"
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      priorityClassName: system-node-critical
+      serviceAccount: nvidia-container-toolkit
+      hostPID: true
+      initContainers:
+      - name: driver-validation
+        image: {{ include "image.fullname" .Values.validator }}
+        imagePullPolicy: {{ .Values.validator.imagePullPolicy }}
+        command: ['sh', '-c']
+        args: ["nvidia-validator"]
+        env:
+          - name: WITH_WAIT
+            value: "true"
+          - name: COMPONENT
+            value: driver
+        securityContext:
+          privileged: true
+          seLinuxOptions:
+            level: "s0"
+        volumeMounts:
+          - name: driver-install-path
+            mountPath: /run/nvidia/driver
+            mountPropagation: HostToContainer
+          - name: run-nvidia-validations
+            mountPath: /run/nvidia/validations
+            mountPropagation: Bidirectional
+      containers:
+      - name: nvidia-container-toolkit-ctr
+        image: {{ include "image.fullname" .Values.toolkit }}
+        imagePullPolicy: {{ .Values.toolkit.imagePullPolicy }}
+        args: ["/usr/local/nvidia"]
+        env:
+        - name: RUNTIME
+          value: {{.Values.containerRuntime}}
+        {{- if eq .Values.containerRuntime "containerd" }}
+        - name: CONTAINERD_RUNTIME_CLASS
+          value: {{.Values.runtimeClass | default "nvidia" }}
+        - name: RUNTIME_ARGS
+          value: "--socket /runtime/socket-dir/containerd.sock --config /runtime/config-dir/config.toml"
+        {{- else if eq .Values.containerRuntime "containerd"}}
+        - name: RUNTIME_ARGS
+          value: "--socket /runtime/socket-dir/docker.sock --config /runtime/config-dir/daemon.json"
+        {{- end }}
+        {{- if .Values.driver.enabled }}
+        - name: NVIDIA_DRIVER_ROOT
+          value: "/run/nvidia/driver"
+        {{- else }}
+        - name: NVIDIA_DRIVER_ROOT
+          value: "/"
+        {{- end }}
+        {{- range .Values.toolkit.env }}
+        - name: {{ .name }}
+          value: {{ .value | quote }}
+        {{- end }}
+        securityContext:
+          privileged: true
+          seLinuxOptions:
+            level: "s0"
+        volumeMounts:
+        {{- if or (eq .Values.containerRuntime "containerd") (eq .Values.containerRuntime "docker") }}
+          - name: runtime-socket
+            mountPath: /runtime/socket-dir
+            mountPropagation: Bidirectional
+          - name: runtime-config
+            mountPath: /runtime/config-dir
+            mountPropagation: Bidirectional
+        {{- end }}
+          - name: nvidia-run-path
+            mountPath: /run/nvidia
+            mountPropagation: Bidirectional
+          - name: nvidia-local
+            mountPath: /usr/local/nvidia
+          - name: crio-hooks
+            mountPath: /usr/share/containers/oci/hooks.d
+        {{- with .Values.toolkit.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      volumes:
+        {{- if eq .Values.containerRuntime "containerd" }}
+        - name: runtime-socket
+          hostPath:
+            path: /run/containerd
+            type: DirectoryOrCreate
+        - name: runtime-config
+          hostPath:
+            path: /etc/containerd
+            type: DirectoryOrCreate
+        {{- else if eq .Values.containerRuntime "docker" }}
+        - name: runtime-socket
+          hostPath:
+            path: /var/run
+            type: DirectoryOrCreate
+        - name: runtime-config
+          hostPath:
+            path: /etc/docker
+            type: DirectoryOrCreate
+        {{- end }}
+        - name: nvidia-run-path
+          hostPath:
+            path: /run/nvidia
+            type: DirectoryOrCreate
+        - name: run-nvidia-validations
+          hostPath:
+            path: /run/nvidia/validations
+            type: DirectoryOrCreate
+        {{- if .Values.driver.enabled }}
+        - name: driver-install-path
+          hostPath:
+            path: /run/nvidia/driver
+        {{- else }}
+        - name: driver-install-path
+          hostPath:
+            path: /
+        {{- end }}
+        - name: nvidia-local
+          hostPath:
+            path: /usr/local/nvidia
+        - name: crio-hooks
+          hostPath:
+            path: /run/containers/oci/hooks.d
+{{- end }}

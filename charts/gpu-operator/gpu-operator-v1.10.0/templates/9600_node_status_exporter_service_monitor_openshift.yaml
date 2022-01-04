@@ -1,0 +1,20 @@
+{{- if .Values.nodeStatusExporter.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nvidia-node-status-exporter
+  namespace: {{.Values.specialresource.spec.namespace}}
+  labels:
+    app: nvidia-node-status-exporter
+spec:
+  endpoints:
+  - port: node-status
+    path: "/metrics"
+  jobLabel: node-status
+  namespaceSelector:
+    matchNames:
+    - {{.Values.specialresource.spec.namespace}}
+  selector:
+    matchLabels:
+     app: nvidia-node-status-exporter
+{{- end }}
